@@ -14,6 +14,9 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler, OneHotEncoder, OrdinalEncoder
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from sklearn.base import TransformerMixin, BaseEstimator
+from sklearn.linear_model import LassoCV, RidgeCV
+from imblearn.over_sampling import SMOTE, RandomOverSampler
+from imblearn.under_sampling import RandomUnderSampler
 import joblib
 import re
 import datetime
@@ -59,6 +62,7 @@ def save_preprocessing_pipeline(pipeline: Pipeline, path: str = "preprocessing_p
 
 def preprocess_interface(df: pd.DataFrame) -> Tuple[Optional[pd.DataFrame], Optional[Pipeline]]:
     st.header("3. Предобработка данных")
+
     try:
         cols = df.columns.tolist()
         st.write("Колонки в датасете:")
@@ -66,36 +70,51 @@ def preprocess_interface(df: pd.DataFrame) -> Tuple[Optional[pd.DataFrame], Opti
 
         # Target selection
         target = st.selectbox("Выберите целевую переменную (для регрессии)", options=["(нет)"] + cols, index=0)
-        if target == "(нет)":
-            st.warning("Целевая переменная не выбрана. Предобработка без таргета возможна, но обучение нельзя будет начать.")
-            target = None
+
+        # Сохраняем исходный target отдельно
+        original_target = None
+        if target is not None and target != "(нет)":
+            original_target = df[target].copy()
+            y = df[target].copy()
+            X = df.drop(columns=[target])
+            st.write(f"Распределение целевой переменной '{target}':")
+            st.write(y.value_counts().sort_index())
+        else:
+            y = None
+            X = df.copy()
 
         # Column-wise operations
-        numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
-        cat_cols = df.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
-        datetime_candidates = [c for c in cols if _is_datetime_series(df[c])]
-        st.write(f"Числовые: {numeric_cols}")
-        st.write(f"Категориальные: {cat_cols}")
-        st.write(f"Кандидаты datetime: {datetime_candidates}")
+        numeric_cols = X.select_dtypes(include=["number"]).columns.tolist()
+        cat_cols = X.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+        datetime_candidates = [c for c in X.columns if _is_datetime_series(X[c])]
+
+        st.write(f"**Числовые признаки:** {numeric_cols}")
+        st.write(f"**Категориальные признаки:** {cat_cols}")
+        st.write(f"**Кандидаты datetime:** {datetime_candidates}")
 
         # Ask user which columns to treat as datetime
         dt_cols = st.multiselect("Преобразовать в datetime (авто-парсинг)", options=datetime_candidates, default=[])
         for c in dt_cols:
             try:
-                df[c] = pd.to_datetime(df[c], errors="coerce", infer_datetime_format=True)
+                X[c] = pd.to_datetime(X[c], errors="coerce", infer_datetime_format=True)
             except Exception:
                 st.warning(f"Не удалось автопарсить колонку {c} в datetime.")
 
         # Missing value strategies
         st.subheader("Обработка пропусков")
-        num_strategy = st.selectbox("Числовые: стратегия", options=["mean", "median", "most_frequent", "constant", "drop"], index=0)
-        cat_strategy = st.selectbox("Категориальные: стратегия", options=["most_frequent", "constant", "drop"], index=0)
-        constant_num = None
-        constant_cat = None
-        if num_strategy == "constant":
-            constant_num = st.number_input("Числовая константа для заполнения", value=0.0)
-        if cat_strategy == "constant":
-            constant_cat = st.text_input("Категориальная константа для заполнения", value="Unknown")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("**Числовые признаки**")
+            num_strategy = st.selectbox("Стратегия заполнения", options=["mean", "median", "most_frequent", "constant", "drop"], index=0)
+            if num_strategy == "constant":
+                constant_num = st.number_input("Числовая константа для заполнения", value=0.0)
+
+        with col2:
+            st.write("**Категориальные признаки**")
+            cat_strategy = st.selectbox("Стратегия заполнения", options=["most_frequent", "constant", "drop"], index=0)
+            if cat_strategy == "constant":
+                constant_cat = st.text_input("Категориальная константа для заполнения", value="Unknown")
 
         # Encoding
         st.subheader("Кодирование признаков")
@@ -109,8 +128,11 @@ def preprocess_interface(df: pd.DataFrame) -> Tuple[Optional[pd.DataFrame], Opti
         # Outlier handling
         st.subheader("Обработка выбросов")
         outlier_method = st.selectbox("Метод", options=["none", "IQR", "zscore", "winsorize"], index=0)
-        iqr_k = st.slider("IQR * k (для границ)", min_value=1.0, max_value=3.0, value=1.5) if outlier_method == "IQR" else None
-        z_thresh = st.slider("Z-score порог", min_value=2.0, max_value=5.0, value=3.0) if outlier_method == "zscore" else None
+
+        if outlier_method == "IQR":
+            iqr_k = st.slider("IQR * k (для границ)", min_value=1.0, max_value=3.0, value=1.5)
+        elif outlier_method == "zscore":
+            z_thresh = st.slider("Z-score порог", min_value=2.0, max_value=5.0, value=3.0)
 
         # Text processing
         st.subheader("Текстовые признаки")
@@ -125,205 +147,289 @@ def preprocess_interface(df: pd.DataFrame) -> Tuple[Optional[pd.DataFrame], Opti
         poly_degree = st.slider("Степень полиномиальных признаков (0 - нет)", 0, 3, 0)
         date_features = st.multiselect("Извлечь признаки из datetime", options=dt_cols)
 
+        # Балансировка данных
+        st.subheader("Балансировка классов")
+        balance_method = st.selectbox(
+            "Выберите метод балансировки",
+            options=["none", "SMOTE", "RandomOverSampler", "RandomUnderSampler"],
+            index=0
+        )
+
+        # Автоматическая оптимизация признаков
+        st.subheader("Автоматическая оптимизация признаков")
+        feature_optimization = st.selectbox(
+            "Метод оптимизации признаков",
+            options=["none", "LassoCV", "RidgeCV"],
+            index=0
+        )
+
+        if feature_optimization != "none":
+            if feature_optimization == "LassoCV":
+                n_alphas = st.slider("Количество альфа для LassoCV", 10, 100, 50)
+            else:
+                n_alphas = st.slider("Количество альфа для RidgeCV", 10, 100, 50)
+
         # Preview transformations and build pipeline when user clicks
         if st.button("Применить предобработку"):
             with st.spinner("Применяю предобработку..."):
-                # Copy df
-                df_proc = df.copy()
-                # Handle missing
-                # Numeric
-                num_cols = df_proc.select_dtypes(include=["number"]).columns.tolist()
-                cat_columns = df_proc.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
-                transformers = []
-                if num_cols:
-                    if num_strategy == "drop":
-                        df_proc.drop(columns=[c for c in num_cols if df_proc[c].isna().all()], inplace=True)
-                        num_imputer = None
-                    else:
-                        if num_strategy == "constant":
-                            num_imputer = SimpleImputer(strategy="constant", fill_value=constant_num)
-                        else:
-                            num_imputer = SimpleImputer(strategy=num_strategy)
-                        transformers.append(("num_imputer", num_imputer, num_cols))
-                if cat_columns:
-                    if cat_strategy == "drop":
-                        df_proc.drop(columns=[c for c in cat_columns if df_proc[c].isna().all()], inplace=True)
-                        cat_imputer = None
-                    else:
-                        if cat_strategy == "constant":
-                            cat_imputer = SimpleImputer(strategy="constant", fill_value=constant_cat)
-                        else:
-                            cat_imputer = SimpleImputer(strategy=cat_strategy)
-                        transformers.append(("cat_imputer", cat_imputer, cat_columns))
-
-                # Encoding
-                enc = None
-                if cat_columns:
-                    if encode_strategy == "onehot":
-                        enc = OneHotEncoder(handle_unknown="ignore", sparse=False, drop="first" if onehot_drop else None)
-                        transformers.append(("onehot", enc, cat_columns))
-                    elif encode_strategy == "ordinal":
-                        enc = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1)
-                        transformers.append(("ordinal", enc, cat_columns))
-                    else:
-                        # label-encode fallback using pandas factorize per column later
-                        pass
-
-                # Text vectorizers (handled separately)
-                text_pipelines = {}
-                if text_cols:
-                    for tc in text_cols:
-                        if text_method == "tfidf":
-                            vec = Pipeline([
-                                ("clean", TextCleaner()),
-                                ("tfidf", TfidfVectorizer(max_features=max_features))
-                            ])
-                        else:
-                            vec = Pipeline([
-                                ("clean", TextCleaner()),
-                                ("count", CountVectorizer(max_features=max_features))
-                            ])
-                        text_pipelines[tc] = vec
-
-                # Scaling
-                scaler = None
-                if scale_choice == "standard":
-                    scaler = StandardScaler()
-                elif scale_choice == "minmax":
-                    scaler = MinMaxScaler()
-                elif scale_choice == "robust":
-                    scaler = RobustScaler()
-
-                # Build a ColumnTransformer for impute+encode+scale (numerics)
-                col_transformers = []
-                if num_cols:
-                    # impute then scale
-                    steps = []
-                    if num_strategy != "drop":
-                        steps.append(("imputer", SimpleImputer(strategy=num_strategy if num_strategy!="constant" else "constant", fill_value=constant_num if num_strategy=="constant" else None)))
-                    if scaler is not None:
-                        steps.append(("scaler", scaler))
-                    if steps:
-                        col_transformers.append(("num", Pipeline(steps), num_cols))
-                if cat_columns and encode_strategy in ["onehot", "ordinal"]:
-                    if encode_strategy == "onehot":
-                        enc_tr = OneHotEncoder(handle_unknown="ignore", sparse=False, drop="first" if onehot_drop else None)
-                        col_transformers.append(("cat", Pipeline([("imputer", SimpleImputer(strategy=cat_strategy if cat_strategy!="constant" else "constant", fill_value=constant_cat if cat_strategy=="constant" else None)), ("onehot", enc_tr)]), cat_columns))
-                    else:
-                        enc_tr = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1)
-                        col_transformers.append(("cat", Pipeline([("imputer", SimpleImputer(strategy=cat_strategy if cat_strategy!="constant" else "constant", fill_value=constant_cat if cat_strategy=="constant" else None)), ("ordinal", enc_tr)]), cat_columns))
-
-                column_transformer = ColumnTransformer(transformers=col_transformers, remainder="drop", sparse_threshold=0)
-
-                # Apply transformations manually to produce a processed DataFrame (simplified)
                 try:
-                    # Handle simple imputations and label encode fallback
-                    df_trans = df_proc.copy()
-                    if num_cols:
-                        for c in num_cols:
-                            if df_trans[c].isna().any():
-                                if num_strategy == "mean":
-                                    df_trans[c] = df_trans[c].fillna(df_trans[c].mean())
-                                elif num_strategy == "median":
-                                    df_trans[c] = df_trans[c].fillna(df_trans[c].median())
-                                elif num_strategy == "most_frequent":
-                                    df_trans[c] = df_trans[c].fillna(df_trans[c].mode().iloc[0] if not df_trans[c].mode().empty else 0)
-                                elif num_strategy == "constant":
-                                    df_trans[c] = df_trans[c].fillna(constant_num)
-                    if cat_columns:
-                        for c in cat_columns:
-                            if df_trans[c].isna().any():
-                                if cat_strategy == "most_frequent":
-                                    df_trans[c] = df_trans[c].fillna(df_trans[c].mode().iloc[0] if not df_trans[c].mode().empty else "Unknown")
-                                elif cat_strategy == "constant":
-                                    df_trans[c] = df_trans[c].fillna(constant_cat)
+                    # Копируем данные для обработки
+                    X_proc = X.copy()
+
+                    # ИСКЛЮЧАЕМ ТАРГЕТ ИЗ ОБРАБОТКИ ВЫБРОСОВ И МАСШТАБИРОВАНИЯ
+                    # Обрабатываем только фичи (X_proc), target остается неизменным
+
+                    # Handle missing values
+                    numeric_cols_actual = X_proc.select_dtypes(include=["number"]).columns.tolist()
+                    cat_cols_actual = X_proc.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+
+                    # Numeric imputation
+                    if numeric_cols_actual:
+                        if num_strategy == "drop":
+                            X_proc.drop(columns=[c for c in numeric_cols_actual if X_proc[c].isna().all()], inplace=True)
+                        else:
+                            for c in numeric_cols_actual:
+                                if X_proc[c].isna().any():
+                                    if num_strategy == "mean":
+                                        X_proc[c] = X_proc[c].fillna(X_proc[c].mean())
+                                    elif num_strategy == "median":
+                                        X_proc[c] = X_proc[c].fillna(X_proc[c].median())
+                                    elif num_strategy == "most_frequent":
+                                        X_proc[c] = X_proc[c].fillna(X_proc[c].mode().iloc[0] if not X_proc[c].mode().empty else 0)
+                                    elif num_strategy == "constant":
+                                        X_proc[c] = X_proc[c].fillna(constant_num)
+
+                    # Categorical imputation
+                    if cat_cols_actual:
+                        if cat_strategy == "drop":
+                            X_proc.drop(columns=[c for c in cat_cols_actual if X_proc[c].isna().all()], inplace=True)
+                        else:
+                            for c in cat_cols_actual:
+                                if X_proc[c].isna().any():
+                                    if cat_strategy == "most_frequent":
+                                        X_proc[c] = X_proc[c].fillna(X_proc[c].mode().iloc[0] if not X_proc[c].mode().empty else "Unknown")
+                                    elif cat_strategy == "constant":
+                                        X_proc[c] = X_proc[c].fillna(constant_cat)
+
                     # Label encode fallback
-                    if cat_columns and encode_strategy == "label-encode":
-                        for c in cat_columns:
-                            df_trans[c], _ = pd.factorize(df_trans[c].astype(str), sort=True)
+                    if cat_cols_actual and encode_strategy == "label-encode":
+                        for c in cat_cols_actual:
+                            X_proc[c], _ = pd.factorize(X_proc[c].astype(str), sort=True)
+
                     # Text vectorization
-                    for tc, pipe in text_pipelines.items():
-                        try:
-                            texts = pipe.fit_transform(df_trans[tc].fillna("").astype(str))
-                            # Make DF of vectors
-                            cols_text = [f"{tc}_text_{i}" for i in range(texts.shape[1])]
-                            df_text = pd.DataFrame(texts.toarray() if hasattr(texts, "toarray") else texts, columns=cols_text, index=df_trans.index)
-                            df_trans = pd.concat([df_trans.drop(columns=[tc]), df_text], axis=1)
-                        except Exception as e:
-                            st.warning(f"Ошибка при векторизации текста {tc}: {e}")
+                    text_pipelines = {}
+                    if text_cols:
+                        for tc in text_cols:
+                            try:
+                                if text_method == "tfidf":
+                                    vec = Pipeline([
+                                        ("clean", TextCleaner()),
+                                        ("tfidf", TfidfVectorizer(max_features=max_features))
+                                    ])
+                                else:
+                                    vec = Pipeline([
+                                        ("clean", TextCleaner()),
+                                        ("count", CountVectorizer(max_features=max_features))
+                                    ])
+
+                                texts = vec.fit_transform(X_proc[tc].fillna("").astype(str))
+                                cols_text = [f"{tc}_text_{i}" for i in range(texts.shape[1])]
+                                df_text = pd.DataFrame(texts.toarray() if hasattr(texts, "toarray") else texts,
+                                                       columns=cols_text, index=X_proc.index)
+                                X_proc = pd.concat([X_proc.drop(columns=[tc]), df_text], axis=1)
+                                text_pipelines[tc] = vec
+                            except Exception as e:
+                                st.warning(f"Ошибка при векторизации текста {tc}: {e}")
+
                     # Date features
                     for dcol in date_features:
                         try:
-                            df_trans[f"{dcol}_year"] = df_trans[dcol].dt.year
-                            df_trans[f"{dcol}_month"] = df_trans[dcol].dt.month
-                            df_trans[f"{dcol}_day"] = df_trans[dcol].dt.day
-                            df_trans[f"{dcol}_weekday"] = df_trans[dcol].dt.weekday
+                            X_proc[f"{dcol}_year"] = X_proc[dcol].dt.year
+                            X_proc[f"{dcol}_month"] = X_proc[dcol].dt.month
+                            X_proc[f"{dcol}_day"] = X_proc[dcol].dt.day
+                            X_proc[f"{dcol}_weekday"] = X_proc[dcol].dt.weekday
                         except Exception:
                             st.warning(f"Не удалось извлечь признаки из {dcol}")
-                    # Outlier handling (simple approach)
-                    if outlier_method == "IQR":
-                        for c in num_cols:
-                            q1 = df_trans[c].quantile(0.25)
-                            q3 = df_trans[c].quantile(0.75)
+
+                    # Outlier handling - ТОЛЬКО ДЛЯ ФИЧЕЙ, НЕ ДЛЯ ТАРГЕТА
+                    numeric_cols_current = X_proc.select_dtypes(include=["number"]).columns.tolist()
+
+                    if outlier_method == "IQR" and numeric_cols_current:
+                        for c in numeric_cols_current:
+                            q1 = X_proc[c].quantile(0.25)
+                            q3 = X_proc[c].quantile(0.75)
                             iqr = q3 - q1
                             lower = q1 - iqr * iqr_k
                             upper = q3 + iqr * iqr_k
-                            df_trans.loc[df_trans[c] < lower, c] = np.nan
-                            df_trans.loc[df_trans[c] > upper, c] = np.nan
-                            # reimpute after marking
+                            X_proc.loc[X_proc[c] < lower, c] = np.nan
+                            X_proc.loc[X_proc[c] > upper, c] = np.nan
+                            # Reimpute outliers
                             if num_strategy != "drop":
-                                df_trans[c] = df_trans[c].fillna(df_trans[c].median())
-                    elif outlier_method == "zscore":
-                        for c in num_cols:
-                            col_z = (df_trans[c] - df_trans[c].mean()) / df_trans[c].std(ddof=0)
-                            df_trans.loc[col_z.abs() > z_thresh, c] = np.nan
+                                X_proc[c] = X_proc[c].fillna(X_proc[c].median())
+
+                    elif outlier_method == "zscore" and numeric_cols_current:
+                        for c in numeric_cols_current:
+                            col_z = (X_proc[c] - X_proc[c].mean()) / X_proc[c].std(ddof=0)
+                            X_proc.loc[col_z.abs() > z_thresh, c] = np.nan
                             if num_strategy != "drop":
-                                df_trans[c] = df_trans[c].fillna(df_trans[c].median())
-                    elif outlier_method == "winsorize":
+                                X_proc[c] = X_proc[c].fillna(X_proc[c].median())
+
+                    elif outlier_method == "winsorize" and numeric_cols_current:
                         from scipy.stats.mstats import winsorize
-                        for c in num_cols:
+                        for c in numeric_cols_current:
                             try:
-                                arr = df_trans[c].copy().astype(float)
+                                arr = X_proc[c].copy().astype(float)
                                 lower_p = 0.05
                                 upper_p = 0.95
                                 arr_w = winsorize(arr, (lower_p, 1-upper_p))
-                                df_trans[c] = arr_w
+                                X_proc[c] = arr_w
                             except Exception as e:
                                 st.warning(f"Не удалось применить winsorize к {c}: {e}")
 
-                    # Scaling if chosen (apply SimpleScaler to numeric columns)
-                    if scale_choice != "none" and num_cols:
+                    # Scaling - ТОЛЬКО ДЛЯ ФИЧЕЙ
+                    if scale_choice != "none" and numeric_cols_current:
                         if scale_choice == "standard":
                             scaler = StandardScaler()
                         elif scale_choice == "minmax":
                             scaler = MinMaxScaler()
                         else:
                             scaler = RobustScaler()
-                        df_trans[num_cols] = scaler.fit_transform(df_trans[num_cols])
+                        X_proc[numeric_cols_current] = scaler.fit_transform(X_proc[numeric_cols_current])
 
                     # Drop any fully empty cols
-                    df_trans.dropna(axis=1, how="all", inplace=True)
+                    X_proc.dropna(axis=1, how="all", inplace=True)
 
-                    # Build a lightweight pipeline object to save (for production we'd build a full sklearn pipeline)
-                    pipeline = {
-                        "num_strategy": num_strategy,
-                        "cat_strategy": cat_strategy,
-                        "encode_strategy": encode_strategy,
-                        "scale_choice": scale_choice,
-                        "outlier_method": outlier_method,
-                        "text_pipelines": {k: None for k in text_pipelines.keys()},
-                    }
+                    # Автоматическая оптимизация признаков
+                    important_features = None
+                    if feature_optimization != "none" and y is not None:
+                        try:
+                            # Убедимся, что все данные числовые
+                            X_for_optimization = X_proc.select_dtypes(include=["number"]).copy()
 
-                    st.success("Предобработка завершена.")
-                    st.dataframe(df_trans.head(5))
-                    return df_trans.reset_index(drop=True), pipeline  # type: ignore
+                            if not X_for_optimization.empty:
+                                if feature_optimization == "LassoCV":
+                                    model = LassoCV(cv=5, n_alphas=n_alphas, random_state=42)
+                                else:
+                                    model = RidgeCV(cv=5, alphas=np.logspace(-3, 3, n_alphas))
+
+                                model.fit(X_for_optimization, y)
+
+                                # Выбираем важные признаки
+                                if feature_optimization == "LassoCV":
+                                    # Для Lasso - признаки с ненулевыми коэффициентами
+                                    important_features = X_for_optimization.columns[model.coef_ != 0].tolist()
+                                else:
+                                    # Для Ridge - признаки с наибольшими абсолютными коэффициентами
+                                    coef_abs = np.abs(model.coef_)
+                                    threshold = np.percentile(coef_abs, 50)  # Берем верхние 50%
+                                    important_features = X_for_optimization.columns[coef_abs >= threshold].tolist()
+
+                                if important_features:
+                                    X_proc = X_proc[important_features]
+                                    st.success(f"Отобрано {len(important_features)} важных признаков методом {feature_optimization}")
+                                else:
+                                    st.warning("Метод оптимизации не отобрал важные признаки")
+
+                        except Exception as e:
+                            st.warning(f"Ошибка при оптимизации признаков: {e}")
+
+                    # Балансировка данных
+                    if y is not None and balance_method != "none":
+                        try:
+                            # Проверяем, является ли задача классификацией (бинарной или многоклассовой)
+                            unique_classes = y.nunique()
+                            if unique_classes <= 10:  # Считаем это классификацией
+                                if balance_method == "SMOTE":
+                                    sampler = SMOTE(random_state=42)
+                                elif balance_method == "RandomOverSampler":
+                                    sampler = RandomOverSampler(random_state=42)
+                                else:
+                                    sampler = RandomUnderSampler(random_state=42)
+
+                                X_res, y_res = sampler.fit_resample(X_proc, y)
+
+                                # Создаем новый DataFrame с сбалансированными данными
+                                df_balanced = pd.concat([pd.DataFrame(X_res, columns=X_proc.columns),
+                                                         pd.Series(y_res, name=target)], axis=1)
+
+                                st.success(f"Балансировка методом {balance_method} выполнена. "
+                                           f"Распределение классов: {dict(zip(*np.unique(y_res, return_counts=True)))}")
+
+                                # Обновляем данные
+                                X_proc = X_res
+                                y = y_res
+                            else:
+                                st.info("Балансировка применяется только для задач классификации (<=10 уникальных классов)")
+
+                        except Exception as e:
+                            st.warning(f"Не удалось применить балансировку: {e}")
+
+                    # Собираем финальный DataFrame
+                    if y is not None:
+                        df_final = pd.concat([X_proc, y.reset_index(drop=True)], axis=1)
+                    else:
+                        df_final = X_proc.copy()
+
+                    # Строим pipeline для сохранения
+                    pipeline = Pipeline([
+                        ('preprocessor', ColumnTransformer(
+                            transformers=[
+                                ('num', Pipeline([
+                                    ('imputer', SimpleImputer(strategy=num_strategy if num_strategy != "constant" else "constant",
+                                                              fill_value=constant_num if num_strategy == "constant" else None)),
+                                    ('scaler', StandardScaler() if scale_choice == "standard" else
+                                    MinMaxScaler() if scale_choice == "minmax" else
+                                    RobustScaler() if scale_choice == "robust" else 'passthrough')
+                                ]), numeric_cols_actual),
+                                ('cat', Pipeline([
+                                    ('imputer', SimpleImputer(strategy=cat_strategy if cat_strategy != "constant" else "constant",
+                                                              fill_value=constant_cat if cat_strategy == "constant" else None)),
+                                    ('encoder', OneHotEncoder(drop='first' if onehot_drop else None) if encode_strategy == "onehot" else
+                                    OrdinalEncoder() if encode_strategy == "ordinal" else 'passthrough')
+                                ]), cat_cols_actual)
+                            ],
+                            remainder='passthrough'
+                        ))
+                    ])
+
+                    # Показываем результаты
+                    st.subheader("Результаты предобработки")
+                    st.write(f"Размерность данных после обработки: {df_final.shape}")
+
+                    if y is not None:
+                        st.write(f"Распределение целевой переменной после обработки:")
+                        target_counts = df_final[target].value_counts().sort_index()
+                        st.write(target_counts)
+
+                        # Проверяем, не стал ли target нулевым
+                        if target_counts.sum() == 0:
+                            st.error("ВНИМАНИЕ: Целевая переменная стала полностью нулевой после обработки!")
+                            st.info("Рекомендации: проверьте настройки обработки выбросов и убедитесь, что target исключен из обработки")
+
+                    st.write("Первые 5 строк обработанных данных:")
+                    st.dataframe(df_final.head())
+
+                    # Сохраняем pipeline
+                    try:
+                        save_preprocessing_pipeline(pipeline)
+                        st.success("Pipeline предобработки сохранен в файл 'preprocessing_pipeline.joblib'")
+                    except Exception as e:
+                        st.warning(f"Не удалось сохранить pipeline: {e}")
+
+                    return df_final, pipeline
+
                 except Exception as e:
                     st.error(f"Ошибка при применении предобработки: {e}")
+                    import traceback
+                    st.error(f"Детали ошибки: {traceback.format_exc()}")
                     return None, None
+
         else:
             st.info("Настройте параметры и нажмите 'Применить предобработку'.")
             return None, None
 
     except Exception as e:
         st.error(f"Ошибка в интерфейсе предобработки: {e}")
+        import traceback
+        st.error(f"Детали ошибки: {traceback.format_exc()}")
         return None, None

@@ -1,15 +1,20 @@
 # app.py
 """
-Главный файл Streamlit-приложения для анализа данных и построения регрессионных моделей.
+Главный файл Streamlit-приложения для анализа данных и построения ML-моделей.
 Запуск:
     streamlit run app.py
 """
-from typing import Optional
+from typing import Optional, Dict, Any
 import streamlit as st
 import pandas as pd
+import numpy as np
 import io
 import os
 import joblib
+import sys
+
+# Добавляем путь к модулям
+sys.path.append(os.path.dirname(__file__))
 
 from modules.data_loader import load_data_interface
 from modules.data_explorer import explore_data_interface
@@ -17,81 +22,456 @@ from modules.data_preprocessor import preprocess_interface, save_preprocessing_p
 from modules.model_trainer import train_model_interface, save_model_bytes
 from modules.metrics_visualizer import visualize_metrics_interface
 
-st.set_page_config(page_title="Data Analysis & Regression Studio", layout="wide")
+st.set_page_config(
+    page_title="Data Analysis & ML Studio",
+    layout="wide",
+    page_icon="📊",
+    initial_sidebar_state="expanded"
+)
 
-APP_TITLE = "Data Analysis & Regression Studio"
+APP_TITLE = "Data Analysis & Machine Learning Studio"
+
+def init_session_state():
+    """Инициализация состояния сессии"""
+    defaults = {
+        "df": None,
+        "processed_df": None,
+        "pipeline": None,
+        "model": None,
+        "train_results": None,
+        "data_loaded": False,
+        "data_processed": False,
+        "model_trained": False,
+        "current_page": "Загрузка данных"
+    }
+
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+def show_sidebar_navigation():
+    """Отображение навигации в сайдбаре"""
+    st.sidebar.title("📊 Навигация")
+
+    # Индикатор прогресса
+    st.sidebar.markdown("### Прогресс")
+
+    # Индикаторы статуса
+    status_emoji = {
+        True: "✅",
+        False: "❌"
+    }
+
+    st.sidebar.markdown(f"{status_emoji[st.session_state.data_loaded]} Загрузка данных")
+    st.sidebar.markdown(f"{status_emoji[st.session_state.data_processed]} Предобработка")
+    st.sidebar.markdown(f"{status_emoji[st.session_state.model_trained]} Обучение модели")
+
+    st.sidebar.markdown("---")
+
+    # Навигация
+    pages = [
+        ("📥 Загрузка данных", "Загрузка данных"),
+        ("🔍 Разведочный анализ", "Разведочный анализ"),
+        ("⚙️ Предобработка", "Предобработка"),
+        ("🧠 Обучение модели", "Обучение модели"),
+        ("📈 Визуализация метрик", "Визуализация метрик"),
+        ("❓ Справка/README", "Справка/README")
+    ]
+
+    current_page = st.sidebar.radio("Выберите модуль",
+                                    [page[0] for page in pages],
+                                    index=0)
+
+    # Находим соответствующее имя страницы
+    for display_name, page_name in pages:
+        if display_name == current_page:
+            return page_name
+
+    return "Загрузка данных"
+
+def show_data_info():
+    """Отображение информации о данных в сайдбаре"""
+    if st.session_state.df is not None:
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### Информация о данных")
+        st.sidebar.write(f"📏 Размер: {st.session_state.df.shape[0]} строк, {st.session_state.df.shape[1]} столбцов")
+
+        if st.session_state.processed_df is not None:
+            st.sidebar.write(f"⚙️ Обработано: {st.session_state.processed_df.shape[0]} строк, {st.session_state.processed_df.shape[1]} столбцов")
+
+def show_quick_actions():
+    """Быстрые действия в сайдбаре"""
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### Быстрые действия")
+
+    if st.session_state.df is not None:
+        if st.sidebar.button("🔄 Сбросить все данные", use_container_width=True):
+            reset_session_state()
+            st.rerun()
+
+        # Предпросмотр данных
+        if st.sidebar.button("👀 Предпросмотр данных", use_container_width=True):
+            st.session_state.show_data_preview = True
+
+def reset_session_state():
+    """Сброс состояния сессии"""
+    keys_to_keep = ['current_page']
+    backup = {k: st.session_state[k] for k in keys_to_keep if k in st.session_state}
+
+    st.session_state.clear()
+
+    for k, v in backup.items():
+        st.session_state[k] = v
+
+def show_welcome_page():
+    """Отображение приветственной страницы"""
+    st.markdown(f"""
+    <div style="text-align: center; padding: 2rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 10px; color: white;">
+        <h1 style="font-size: 3rem; margin-bottom: 1rem;">{APP_TITLE}</h1>
+        <p style="font-size: 1.2rem;">Комплексная платформа для анализа данных и построения machine learning моделей</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # Быстрый старт
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("### 📥 1. Загрузка данных")
+        st.markdown("""
+        - Поддержка CSV, Excel файлов
+        - Автодетекция кодировок и разделителей  
+        - Обработка ошибок загрузки
+        - Предпросмотр данных
+        """)
+
+    with col2:
+        st.markdown("### 🔍 2. Анализ и обработка")
+        st.markdown("""
+        - Разведочный анализ данных
+        - Визуализация распределений
+        - Обработка пропусков и выбросов
+        - Feature engineering
+        """)
+
+    with col3:
+        st.markdown("### 🧠 3. ML модели")
+        st.markdown("""
+        - Регрессия и классификация
+        - Автоподбор гиперпараметров
+        - Кросс-валидация
+        - Оценка качества моделей
+        """)
+
+    st.markdown("---")
+
+    # Пример использования
+    st.markdown("### 🚀 Быстрый старт")
+
+    example_col1, example_col2 = st.columns([2, 1])
+
+    with example_col1:
+        st.markdown("""
+        1. **Загрузите данные** через модуль 'Загрузка данных'
+        2. **Исследуйте данные** в модуле 'Разведочный анализ'  
+        3. **Обработайте данные** в модуле 'Предобработка'
+        4. **Обучите модель** в модуле 'Обучение модели'
+        5. **Проанализируйте результаты** в модуле 'Визуализация метрик'
+        """)
+
+    with example_col2:
+        st.info("💡 **Совет**: Используйте навигацию в боковой панели для перемещения между модулями")
+
+def show_data_preview():
+    """Предпросмотр данных"""
+    if st.session_state.get('show_data_preview', False):
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### Предпросмотр данных")
+
+        if st.session_state.df is not None:
+            st.sidebar.dataframe(st.session_state.df.head(10), use_container_width=True)
+
+            if st.sidebar.button("Закрыть предпросмотр", use_container_width=True):
+                st.session_state.show_data_preview = False
+                st.rerun()
 
 def main() -> None:
-    st.title(APP_TITLE)
-    st.sidebar.title("Навигация")
-    page = st.sidebar.radio("Выберите модуль", (
-        "Загрузка данных", "Разведочный анализ", "Предобработка", "Обучение модели", "Визуализация метрик", "Справка/README"
-    ))
+    """Главная функция приложения"""
 
-    # Global session state containers
-    if "df" not in st.session_state:
-        st.session_state.df = None  # type: ignore
-    if "processed_df" not in st.session_state:
-        st.session_state.processed_df = None  # type: ignore
-    if "pipeline" not in st.session_state:
-        st.session_state.pipeline = None  # type: ignore
-    if "model" not in st.session_state:
-        st.session_state.model = None  # type: ignore
-    if "train_results" not in st.session_state:
-        st.session_state.train_results = None  # type: ignore
+    # Инициализация состояния
+    init_session_state()
 
+    # Навигация
+    page = show_sidebar_navigation()
+
+    # Информация о данных
+    show_data_info()
+
+    # Быстрые действия
+    show_quick_actions()
+
+    # Предпросмотр данных
+    show_data_preview()
+
+    # Основной контент
     try:
         if page == "Загрузка данных":
+            st.header("📥 Загрузка данных")
             df = load_data_interface()
             if df is not None:
                 st.session_state.df = df
+                st.session_state.data_loaded = True
+                st.success(f"✅ Данные успешно загружены! Размер: {df.shape[0]} строк, {df.shape[1]} столбцов")
+
+                # Кнопка для скачивания исходных данных
+                if st.button("💾 Скачать исходные данные (CSV)"):
+                    buf = io.BytesIO()
+                    df.to_csv(buf, index=False, encoding='utf-8')
+                    buf.seek(0)
+                    st.download_button(
+                        label="Скачать CSV",
+                        data=buf,
+                        file_name="original_data.csv",
+                        mime="text/csv"
+                    )
+
         elif page == "Разведочный анализ":
+            st.header("🔍 Разведочный анализ данных")
             if st.session_state.df is None:
-                st.info("Сначала загрузите данные в разделе 'Загрузка данных'.")
+                st.error("❌ Данные не загружены!")
+                st.info("Пожалуйста, сначала загрузите данные в разделе 'Загрузка данных'")
+                if st.button("📥 Перейти к загрузке данных"):
+                    st.session_state.current_page = "Загрузка данных"
+                    st.rerun()
             else:
                 explore_data_interface(st.session_state.df)
+
         elif page == "Предобработка":
+            st.header("⚙️ Предобработка данных")
             if st.session_state.df is None:
-                st.info("Сначала загрузите данные в разделе 'Загрузка данных'.")
+                st.error("❌ Данные не загружены!")
+                st.info("Пожалуйста, сначала загрузите данные в разделе 'Загрузка данных'")
             else:
-                processed_df, pipeline = preprocess_interface(st.session_state.df)
+                # Выбор данных для обработки
+                data_source = st.radio(
+                    "Выберите данные для обработки:",
+                    ["Исходные данные", "Предварительно обработанные данные"],
+                    horizontal=True
+                )
+
+                if data_source == "Исходные данные":
+                    input_df = st.session_state.df
+                else:
+                    input_df = st.session_state.processed_df if st.session_state.processed_df is not None else st.session_state.df
+
+                processed_df, pipeline = preprocess_interface(input_df)
+
                 if processed_df is not None:
                     st.session_state.processed_df = processed_df
                     st.session_state.pipeline = pipeline
-                    # Offer download
-                    buf = io.BytesIO()
-                    processed_df.to_csv(buf, index=False)
-                    buf.seek(0)
-                    st.download_button("Скачать обработанные данные (CSV)", data=buf, file_name="processed_data.csv")
-                    # Save pipeline
-                    if pipeline is not None:
-                        save_preprocessing_pipeline(pipeline, "preprocessing_pipeline.joblib")
-                        with open("preprocessing_pipeline.joblib", "rb") as f:
-                            st.download_button("Скачать pipeline предобработки", data=f, file_name="preprocessing_pipeline.joblib")
+                    st.session_state.data_processed = True
+
+                    st.success(f"✅ Данные успешно обработаны! Новый размер: {processed_df.shape[0]} строк, {processed_df.shape[1]} столбцов")
+
+                    # Предложение скачать обработанные данные
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        buf_csv = io.BytesIO()
+                        processed_df.to_csv(buf_csv, index=False, encoding='utf-8')
+                        buf_csv.seek(0)
+                        st.download_button(
+                            "💾 Скачать обработанные данные (CSV)",
+                            data=buf_csv,
+                            file_name="processed_data.csv",
+                            mime="text/csv",
+                            use_container_width=True
+                        )
+
+                    with col2:
+                        # Сохранение и скачивание pipeline
+                        if pipeline is not None:
+                            pipeline_path = save_preprocessing_pipeline(pipeline, "preprocessing_pipeline.joblib")
+                            with open(pipeline_path, "rb") as f:
+                                st.download_button(
+                                    "🔧 Скачать pipeline предобработки",
+                                    data=f,
+                                    file_name="preprocessing_pipeline.joblib",
+                                    mime="application/octet-stream",
+                                    use_container_width=True
+                                )
+
         elif page == "Обучение модели":
-            if st.session_state.processed_df is None:
-                st.info("Сначала выполните предобработку данных в разделе 'Предобработка'.")
+            st.header("🧠 Обучение модели")
+
+            # Выбор данных для обучения
+            if st.session_state.processed_df is not None:
+                st.success("✅ Будут использоваться предобработанные данные")
+                train_df = st.session_state.processed_df
+            elif st.session_state.df is not None:
+                st.warning("⚠️ Будут использоваться исходные данные (рекомендуется сначала выполнить предобработку)")
+                train_df = st.session_state.df
             else:
-                model, results = train_model_interface(st.session_state.processed_df)
-                if model is not None:
-                    st.session_state.model = model
-                    st.session_state.train_results = results
-                    # Allow model download (joblib bytes)
-                    model_bytes = save_model_bytes(model)
-                    st.download_button("Скачать обученную модель (joblib)", data=model_bytes, file_name="trained_model.joblib")
+                st.error("❌ Данные не загружены!")
+                st.info("Пожалуйста, сначала загрузите данные в разделе 'Загрузка данных'")
+                return
+
+            model, results = train_model_interface(train_df)
+
+            if model is not None and results is not None:
+                st.session_state.model = model
+                st.session_state.train_results = results
+                st.session_state.model_trained = True
+
+                st.balloons()
+                st.success("✅ Модель успешно обучена!")
+
+                # Скачивание модели
+                model_bytes = save_model_bytes(model)
+                st.download_button(
+                    "💾 Скачать обученную модель",
+                    data=model_bytes,
+                    file_name=f"trained_model_{results.get('problem_type', 'model')}.joblib",
+                    mime="application/octet-stream",
+                    use_container_width=True
+                )
+
         elif page == "Визуализация метрик":
+            st.header("📈 Визуализация метрик")
             if st.session_state.train_results is None:
-                st.info("Сначала обучите модель в разделе 'Обучение модели'.")
+                st.error("❌ Модель не обучена!")
+                st.info("Пожалуйста, сначала обучите модель в разделе 'Обучение модели'")
             else:
                 visualize_metrics_interface(st.session_state.train_results)
-        else:
-            # README / помощь
-            with open("README.md", "r", encoding="utf-8") as f:
-                readme = f.read()
-            st.markdown(readme)
+
+        elif page == "Справка/README":
+            st.header("❓ Справка и документация")
+
+            # Табы для разных разделов справки
+            tab1, tab2, tab3, tab4 = st.tabs(["📖 Общее описание", "🔧 Модули", "🚀 Советы", "📚 Примеры"])
+
+            with tab1:
+                st.markdown("""
+                ### Data Analysis & Machine Learning Studio
+                
+                **Комплексная платформа для анализа данных и построения ML-моделей**
+                
+                #### 🎯 Возможности:
+                - **Загрузка данных**: CSV, Excel с автодетекцией параметров
+                - **Разведочный анализ**: статистика, визуализации, корреляции
+                - **Предобработка**: обработка пропусков, кодирование, масштабирование
+                - **ML модели**: регрессия и классификация с автонастройкой
+                - **Визуализация**: метрики, графики, анализ результатов
+                
+                #### 📊 Поддерживаемые задачи:
+                - **Регрессия**: предсказание числовых значений
+                - **Классификация**: бинарная и многоклассовая
+                """)
+
+            with tab2:
+                st.markdown("""
+                ### Описание модулей
+                
+                #### 📥 Загрузка данных
+                - Поддержка форматов: CSV, Excel (xlsx, xls)
+                - Автодетекция кодировки и разделителей
+                - Обработка ошибок загрузки
+                - Предпросмотр данных
+                
+                #### 🔍 Разведочный анализ
+                - Статистика по данным
+                - Анализ пропусков
+                - Визуализация распределений
+                - Матрица корреляций
+                
+                #### ⚙️ Предобработка
+                - Обработка пропущенных значений
+                - Кодирование категориальных переменных
+                - Масштабирование числовых признаков
+                - Обработка выбросов
+                - Feature engineering
+                
+                #### 🧠 Обучение модели
+                - Автоматическое определение типа задачи
+                - Подбор гиперпараметров
+                - Кросс-валидация
+                - Оценка качества моделей
+                
+                #### 📈 Визуализация метрик
+                - Графики обучения
+                - Матрицы ошибок
+                - Важность признаков
+                - Анализ предсказаний
+                """)
+
+            with tab3:
+                st.markdown("""
+                ### 🚀 Советы по использованию
+                
+                #### 💾 Загрузка данных
+                - Используйте CSV с разделителем-запятой для лучшей совместимости
+                - Проверяйте кодировку русскоязычных файлов (обычно utf-8 или cp1251)
+                - Убедитесь, что заголовки столбцов находятся в первой строке
+                
+                #### 🔍 Анализ данных
+                - Внимательно изучите распределения целевой переменной
+                - Проверьте наличие пропущенных значений
+                - Анализируйте корреляции между признаками
+                
+                #### ⚙️ Предобработка
+                - Всегда обрабатывайте пропущенные значения перед обучением
+                - Для линейных моделей используйте масштабирование
+                - Для tree-based моделей масштабирование не обязательно
+                - Используйте One-Hot Encoding для категориальных признаков с малым числом уникальных значений
+                
+                #### 🧠 Обучение моделей
+                - Начните с простых моделей (Linear Regression, Logistic Regression)
+                - Используйте кросс-валидацию для надежной оценки
+                - Сравните несколько алгоритмов перед выбором финальной модели
+                - Следите за переобучением (большая разница между train и test метриками)
+                """)
+
+            with tab4:
+                st.markdown("""
+                ### 📚 Примеры использования
+                
+                #### Пример 1: Предсказание цен на недвижимость
+                1. **Загрузка**: CSV файл с характеристиками домов
+                2. **Анализ**: распределение цен, корреляции признаков
+                3. **Предобработка**: заполнение пропусков, кодирование районов
+                4. **Обучение**: Random Forest для регрессии
+                5. **Оценка**: анализ важности признаков, точности предсказаний
+                
+                #### Пример 2: Классификация клиентов
+                1. **Загрузка**: данные о клиентах банка
+                2. **Анализ**: баланс классов, выбросы в возрасте/доходах
+                3. **Предобработка**: балансировка классов, масштабирование
+                4. **Обучение**: Gradient Boosting для классификации
+                5. **Оценка**: матрица ошибок, precision-recall кривые
+                
+                #### Пример 3: Анализ временных рядов
+                1. **Загрузка**: продажи по дням/месяцам
+                2. **Анализ**: тренды, сезонность, автокорреляция
+                3. **Предобработка**: создание лагов, извлечение признаков даты
+                4. **Обучение**: регрессия с временными признаками
+                5. **Оценка**: анализ остатков, прогнозирование
+                """)
+
+        # Отображение приветственной страницы если нет данных
+        if (page == "Загрузка данных" and st.session_state.df is None and
+                not st.session_state.get('welcome_shown', False)):
+            show_welcome_page()
+            st.session_state.welcome_shown = True
+
     except Exception as e:
-        st.error(f"Непредвиденная ошибка в приложении: {e}")
+        st.error(f"❌ Непредвиденная ошибка в приложении: {e}")
         st.exception(e)
+
+        # Кнопка для сброса
+        if st.button("🔄 Сбросить приложение"):
+            reset_session_state()
+            st.rerun()
 
 
 if __name__ == "__main__":
