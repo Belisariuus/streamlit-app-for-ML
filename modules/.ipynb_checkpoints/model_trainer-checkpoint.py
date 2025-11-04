@@ -52,8 +52,8 @@ def _detect_problem_type(y: pd.Series) -> str:
     if pd.api.types.is_object_dtype(y) or pd.api.types.is_categorical_dtype(y):
         return "classification"
 
-    # Если много уникальных числовых значений - регрессия
-    return "regression"
+    # Если много уникальных числовых значений - регрессия return "regression"
+    return "classification"
 
 def _get_model_by_name(name: str, params: Dict[str, Any], problem_type: str):
     """Создание модели по имени и типу задачи"""
