@@ -57,8 +57,14 @@ def _is_datetime_series(series: pd.Series) -> bool:
     except Exception:
         return False
 
-def save_preprocessing_pipeline(pipeline: Pipeline, path: str = "preprocessing_pipeline.joblib") -> None:
-    joblib.dump(pipeline, path)
+def save_preprocessing_pipeline(pipeline: Pipeline, path: str = "preprocessing_pipeline.joblib") -> str:
+    """Сохраняет pipeline предобработки и возвращает путь к файлу"""
+    try:
+        joblib.dump(pipeline, path)
+        return path
+    except Exception as e:
+        st.error(f"Ошибка при сохранении pipeline: {e}")
+        return path
 
 def preprocess_interface(df: pd.DataFrame) -> Tuple[Optional[pd.DataFrame], Optional[Pipeline]]:
     st.header("3. Предобработка данных")

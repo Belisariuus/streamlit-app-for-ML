@@ -292,15 +292,21 @@ def main() -> None:
                     with col2:
                         # Сохранение и скачивание pipeline
                         if pipeline is not None:
-                            pipeline_path = save_preprocessing_pipeline(pipeline, "preprocessing_pipeline.joblib")
-                            with open(pipeline_path, "rb") as f:
-                                st.download_button(
-                                    "🔧 Скачать pipeline предобработки",
-                                    data=f,
-                                    file_name="preprocessing_pipeline.joblib",
-                                    mime="application/octet-stream",
-                                    use_container_width=True
-                                )
+                            try:
+                                pipeline_path = save_preprocessing_pipeline(pipeline, "preprocessing_pipeline.joblib")
+                                if pipeline_path and os.path.exists(pipeline_path):
+                                    with open(pipeline_path, "rb") as f:
+                                        st.download_button(
+                                            "🔧 Скачать pipeline предобработки",
+                                            data=f,
+                                            file_name="preprocessing_pipeline.joblib",
+                                            mime="application/octet-stream",
+                                            use_container_width=True
+                                        )
+                                else:
+                                    st.warning("Не удалось сохранить pipeline")
+                            except Exception as e:
+                                st.error(f"Ошибка при сохранении pipeline: {e}")
 
         elif page == "Обучение модели":
             st.header("🧠 Обучение модели")
