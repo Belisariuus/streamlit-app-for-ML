@@ -127,8 +127,8 @@ def show_welcome_page():
     """Отображение приветственной страницы"""
     st.markdown(f"""
     <div style="text-align: center; padding: 2rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 10px; color: white;">
-        <h1 style="font-size: 3rem; margin-bottom: 1rem;">{APP_TITLE}</h1>
-        <p style="font-size: 1.2rem;">Комплексная платформа для анализа данных и построения machine learning моделей</p>
+         #<h1 style="font-size: 3rem; margin-bottom: 1rem;">{APP_TITLE}</h1>
+        <p style="font-size: 1.2rem;"> Платформа для построения моделей классификации</p>
     </div>
     """, unsafe_allow_html=True)
 
