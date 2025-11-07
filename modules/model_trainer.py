@@ -78,9 +78,9 @@ def _get_model_by_name(name: str, params: Dict[str, Any], problem_type: str):
             "GradientBoosting": GradientBoostingClassifier,
             "SVC": SVC,
             "KNeighbors": KNeighborsClassifier,
-            "XGBoost": XGBClassifier,
-            "LightGBM": LGBMClassifier,
-            "CatBoost": CatBoostClassifier
+            # "XGBoost": XGBClassifier,
+            # "LightGBM": LGBMClassifier,
+            # "CatBoost": CatBoostClassifier
         }
     }
 
