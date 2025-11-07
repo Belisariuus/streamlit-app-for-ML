@@ -162,18 +162,18 @@ def preprocess_interface(df: pd.DataFrame) -> Tuple[Optional[pd.DataFrame], Opti
         )
 
         # Автоматическая оптимизация признаков
-         #st.subheader("Автоматическая оптимизация признаков")
-        # feature_optimization = st.selectbox(
-           #  "Метод оптимизации признаков",
-            # options=["none", "LassoCV", "RidgeCV"],
-            # index=0
-        # )
+         st.subheader("Автоматическая оптимизация признаков")
+         feature_optimization = st.selectbox(
+             "Метод оптимизации признаков",
+             options=["none", "LassoCV", "RidgeCV"],
+            index=0
+        )
 
-        #  if feature_optimization != "none":
-           #   if feature_optimization == "LassoCV":
-             #     n_alphas = st.slider("Количество альфа для LassoCV", 10, 100, 50)
-            #  else:
-              #    n_alphas = st.slider("Количество альфа для RidgeCV", 10, 100, 50)
+       if feature_optimization != "none":
+             if feature_optimization == "LassoCV":
+                  n_alphas = st.slider("Количество альфа для LassoCV", 10, 100, 50)
+            else:
+                n_alphas = st.slider("Количество альфа для RidgeCV", 10, 100, 50)
 
         # Preview transformations and build pipeline when user clicks
         if st.button("Применить предобработку"):
