@@ -219,9 +219,9 @@ def train_model_interface(df: pd.DataFrame) -> Tuple[Optional[Any], Optional[Dic
                     "LogisticRegression", "RidgeClassifier", 
                     "RandomForest", "GradientBoosting", "SVC", "KNeighbors"
                 ]
-                if XGBClassifier: algorithms.append("XGBoost")
-                if LGBMClassifier: algorithms.append("LightGBM")
-                if CatBoostClassifier: algorithms.append("CatBoost")
+               # if XGBClassifier: algorithms.append("XGBoost")
+               # if LGBMClassifier: algorithms.append("LightGBM")
+               # if CatBoostClassifier: algorithms.append("CatBoost")
             
             alg = st.selectbox("Выберите алгоритм", options=algorithms)
             
