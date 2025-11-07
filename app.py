@@ -23,7 +23,7 @@ from modules.model_trainer import train_model_interface, save_model_bytes
 from modules.metrics_visualizer import visualize_metrics_interface
 
 st.set_page_config(
-    page_title="Data Analysis & ML Studio",
+    page_title="МОДЕЛИРОВАНИЕ ВЕРОЯТНОСТИ ДЕФОЛТА ЗАЕМЩИКА",
     layout="wide",
     page_icon="📊",
     initial_sidebar_state="expanded"
