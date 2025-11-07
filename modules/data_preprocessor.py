@@ -149,9 +149,9 @@ def preprocess_interface(df: pd.DataFrame) -> Tuple[Optional[pd.DataFrame], Opti
             max_features = st.number_input("Макс. фич в векторизаторе", min_value=100, max_value=50000, value=2000)
 
         # Feature engineering
-        st.subheader("Feature engineering")
-        poly_degree = st.slider("Степень полиномиальных признаков (0 - нет)", 0, 3, 0)
-        date_features = st.multiselect("Извлечь признаки из datetime", options=dt_cols)
+       # st.subheader("Feature engineering")
+       # poly_degree = st.slider("Степень полиномиальных признаков (0 - нет)", 0, 3, 0)
+       # date_features = st.multiselect("Извлечь признаки из datetime", options=dt_cols)
 
         # Балансировка данных
         st.subheader("Балансировка классов")
