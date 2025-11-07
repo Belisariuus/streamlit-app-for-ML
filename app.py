@@ -29,7 +29,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-APP_TITLE = "Data Analysis & Machine Learning Studio"
+APP_TITLE = "МОДЕЛИРОВАНИЕ ВЕРОЯТНОСТИ ДЕФОЛТА ЗАЕМЩИКА"
 
 def init_session_state():
     """Инициализация состояния сессии"""
