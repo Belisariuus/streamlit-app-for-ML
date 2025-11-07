@@ -211,9 +211,9 @@ def train_model_interface(df: pd.DataFrame) -> Tuple[Optional[Any], Optional[Dic
                     "RandomForest", "GradientBoosting", "SVR", "KNeighbors"
                 ]
                 # Добавляем бустинги если доступны
-                if XGBRegressor: algorithms.append("XGBoost")
-                if LGBMRegressor: algorithms.append("LightGBM")
-                if CatBoostRegressor: algorithms.append("CatBoost")
+               # if XGBRegressor: algorithms.append("XGBoost")
+               # if LGBMRegressor: algorithms.append("LightGBM")
+               # if CatBoostRegressor: algorithms.append("CatBoost")
             else:
                 algorithms = [
                     "LogisticRegression", "RidgeClassifier", 
